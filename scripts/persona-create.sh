@@ -1,6 +1,7 @@
 #!/bin/sh
 # persona-create.sh — Interactive AI Persona Engine setup wizard
 # Creates a complete persona with personality, voice, image, and memory config.
+# v2: Supports --dry-run, --workspace, and personality blending.
 
 set -e
 
@@ -15,6 +16,20 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
+
+# --- CLI flags ---
+DRY_RUN=false
+CLI_WORKSPACE=""
+CLI_CONFIG=""
+
+# Parse pre-wizard flags
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=true ;;
+        --workspace=*) CLI_WORKSPACE="${arg#--workspace=}" ;;
+        --config=*) CLI_CONFIG="${arg#--config=}" ;;
+    esac
+done
 
 # --- Helper functions ---
 
@@ -119,6 +134,26 @@ case "$ARCHETYPE_NUM" in
     5) ARCHETYPE="custom" ;;
 esac
 
+# Personality blending
+BLEND_ENABLED=false
+BLEND_SECONDARY=""
+BLEND_PRIMARY_WEIGHT="0.7"
+BLEND_SECONDARY_WEIGHT="0.3"
+
+if [ "$ARCHETYPE" != "custom" ]; then
+    BLEND_YN=$(prompt_yn "Blend with a second archetype? (y/n):" "n")
+    if [ "$BLEND_YN" = "true" ]; then
+        BLEND_ENABLED=true
+        printf "  ${BOLD}Choose secondary archetype:${NC}\n"
+        printf "    Available: professional, companion, creative, mentor\n"
+        printf "    Community: financial-advisor, fitness-coach, kids-tutor, creative-writer,\n"
+        printf "               sales-rep, therapist, gaming-buddy, executive-assistant\n"
+        BLEND_SECONDARY=$(prompt_required "Secondary archetype:")
+        BLEND_PRIMARY_WEIGHT=$(prompt_optional "Primary weight (0.0-1.0):" "0.7")
+        BLEND_SECONDARY_WEIGHT=$(prompt_optional "Secondary weight (0.0-1.0):" "0.3")
+    fi
+fi
+
 printf "\n  ${BOLD}How should they communicate?${NC}\n"
 BREVITY=$(prompt_optional "Brevity level (1=verbose, 5=terse):" "3")
 HUMOR=$(prompt_yn "Use humor? (y/n):" "y")
@@ -205,14 +240,73 @@ PLATFORMS=$(prompt_optional "Channels:" "telegram")
 printf "\n"
 
 # --- Determine workspace ---
-WORKSPACE=$(prompt_optional "Workspace directory:" "$HOME/.openclaw/workspace")
-CONFIG_PATH=$(prompt_optional "Config file path:" "$HOME/.openclaw/openclaw.json")
+DEFAULT_WORKSPACE="${CLI_WORKSPACE:-$HOME/.openclaw/workspace}"
+DEFAULT_CONFIG="${CLI_CONFIG:-$HOME/.openclaw/openclaw.json}"
+WORKSPACE=$(prompt_optional "Workspace directory:" "$DEFAULT_WORKSPACE")
+CONFIG_PATH=$(prompt_optional "Config file path:" "$DEFAULT_CONFIG")
 
 printf "\n${BOLD}${BLUE}🔨 Generating persona files...${NC}\n\n"
+
+# --- Dry run check ---
+if [ "$DRY_RUN" = "true" ]; then
+    printf "\n${BOLD}${YELLOW}🔍 DRY RUN — Files that would be generated:${NC}\n\n"
+    printf "  • ${WORKSPACE}/SOUL.md\n"
+    printf "  • ${WORKSPACE}/USER.md\n"
+    printf "  • ${WORKSPACE}/IDENTITY.md\n"
+    printf "  • ${WORKSPACE}/MEMORY.md\n"
+    printf "  • ${WORKSPACE}/AGENTS.md\n"
+    printf "  • ${WORKSPACE}/HEARTBEAT.md\n"
+    printf "  • ${WORKSPACE}/memory/$(date +%%Y-%%m-%%d).md\n"
+    printf "  • ${CONFIG_PATH} (persona section)\n"
+    if [ "$VOICE_PROVIDER" != "none" ]; then
+        printf "  • ${CONFIG_PATH} (messages.tts section)\n"
+    fi
+    if [ "$IMAGE_PROVIDER" != "none" ]; then
+        printf "  • ${CONFIG_PATH} (persona.image section)\n"
+    fi
+    printf "\n  Archetype: ${ARCHETYPE}"
+    if [ "$BLEND_ENABLED" = "true" ]; then
+        printf " + ${BLEND_SECONDARY} (${BLEND_PRIMARY_WEIGHT}/${BLEND_SECONDARY_WEIGHT})"
+    fi
+    printf "\n"
+    printf "\n${BOLD}No files were written.${NC}\n"
+    exit 0
+fi
 
 # --- Build personality profile JSON ---
 # Write a temp profile for the soul generator
 PROFILE_TMP=$(mktemp)
+
+if [ "$BLEND_ENABLED" = "true" ]; then
+cat > "$PROFILE_TMP" << PROFILE_EOF
+{
+    "name": "$PERSONA_NAME",
+    "emoji": "$PERSONA_EMOJI",
+    "creature": "$PERSONA_CREATURE",
+    "vibe": "$PERSONA_VIBE",
+    "userName": "$USER_NAME",
+    "archetypes": [
+        {"name": "$ARCHETYPE", "weight": $BLEND_PRIMARY_WEIGHT},
+        {"name": "$BLEND_SECONDARY", "weight": $BLEND_SECONDARY_WEIGHT}
+    ],
+    "communication": {
+        "brevity": $BREVITY,
+        "humor": $HUMOR,
+        "swearing": "$SWEARING",
+        "banOpeningPhrases": $BAN_OPENERS
+    },
+    "boundaries": {
+        "petNames": $PET_NAMES,
+        "flirtation": $FLIRTATION,
+        "emotionalDepth": "$EMOTIONAL_DEPTH",
+        "protective": $PROTECTIVE
+    },
+    "userRelationship": {
+        "userName": "$USER_NAME"
+    }
+}
+PROFILE_EOF
+else
 cat > "$PROFILE_TMP" << PROFILE_EOF
 {
     "name": "$PERSONA_NAME",
@@ -238,6 +332,7 @@ cat > "$PROFILE_TMP" << PROFILE_EOF
     }
 }
 PROFILE_EOF
+fi
 
 # --- Generate SOUL.md ---
 python3 "$SCRIPT_DIR/generate-soul.py" \
@@ -365,3 +460,4 @@ printf "${BOLD}Next steps:${NC}\n"
 printf "  • Review SOUL.md and adjust anything that doesn't feel right\n"
 printf "  • Run ${CYAN}openclaw gateway restart${NC} to apply changes\n"
 printf "  • Say hello to $PERSONA_NAME on ${PLATFORMS}!\n"
+printf "  • Run ${CYAN}persona-preview.py${NC} to see sample conversations\n"

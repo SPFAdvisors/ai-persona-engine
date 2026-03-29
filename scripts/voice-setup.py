@@ -79,6 +79,87 @@ def non_interactive_setup(provider, config_path, **kwargs):
         print(f"Voice configured: {provider}", file=sys.stderr)
 
 
+def audition_voices(provider="elevenlabs", gender=None, accent=None):
+    """Generate the same test phrase with multiple voice configurations for comparison."""
+    test_phrase = "Hello! I'm your new AI assistant. I'm here to help you with whatever you need — whether that's planning your day, answering questions, or just having a conversation."
+
+    print("\n🎧 Voice Audition\n")
+    print(f"  Test phrase: \"{test_phrase[:60]}...\"\n")
+
+    if provider == "elevenlabs":
+        # ElevenLabs voice catalog (curated defaults)
+        voices = [
+            {"id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel", "desc": "Calm, warm female voice", "gender": "female", "accent": "american"},
+            {"id": "AZnzlk1XvdvUeBnXmlld", "name": "Domi", "desc": "Strong, confident female voice", "gender": "female", "accent": "american"},
+            {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella", "desc": "Soft, gentle female voice", "gender": "female", "accent": "american"},
+            {"id": "ErXwobaYiN019PkySvjV", "name": "Antoni", "desc": "Well-rounded male voice", "gender": "male", "accent": "american"},
+            {"id": "VR6AewLTigWG4xSOukaG", "name": "Arnold", "desc": "Deep, authoritative male voice", "gender": "male", "accent": "american"},
+            {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam", "desc": "Versatile male narrator", "gender": "male", "accent": "american"},
+            {"id": "yoZ06aMxZJJ28mfd3POQ", "name": "Sam", "desc": "Warm, articulate male voice", "gender": "male", "accent": "american"},
+            {"id": "jBpfuIE2acCO8z3wKNLl", "name": "Gigi", "desc": "Energetic, youthful female", "gender": "female", "accent": "american"},
+        ]
+
+        # Filter by gender/accent
+        filtered = voices
+        if gender:
+            filtered = [v for v in filtered if v["gender"] == gender.lower()]
+        if accent:
+            filtered = [v for v in filtered if accent.lower() in v["accent"].lower()]
+
+        # Take top 5
+        candidates = filtered[:5] if filtered else voices[:5]
+
+        print(f"  Provider: ElevenLabs")
+        if gender:
+            print(f"  Filter: gender={gender}")
+        if accent:
+            print(f"  Filter: accent={accent}")
+        print(f"  Candidates: {len(candidates)}\n")
+
+        for i, voice in enumerate(candidates, 1):
+            print(f"  Voice {i}: {voice['name']}")
+            print(f"    {voice['desc']}")
+            print(f"    ID: {voice['id']}")
+            print(f"    To select: --voice-id {voice['id']}")
+            print()
+
+        results = []
+        for v in candidates:
+            results.append({
+                "number": candidates.index(v) + 1,
+                "name": v["name"],
+                "id": v["id"],
+                "description": v["desc"],
+            })
+
+        return results
+
+    elif provider == "builtin":
+        builtin_voices = [
+            {"name": "nova", "desc": "Warm, versatile female voice"},
+            {"name": "alloy", "desc": "Neutral, balanced voice"},
+            {"name": "echo", "desc": "Clear, articulate male voice"},
+            {"name": "fable", "desc": "Expressive, storytelling voice"},
+            {"name": "onyx", "desc": "Deep, authoritative male voice"},
+            {"name": "shimmer", "desc": "Bright, energetic female voice"},
+        ]
+
+        print(f"  Provider: Built-in OpenClaw TTS\n")
+
+        for i, voice in enumerate(builtin_voices, 1):
+            print(f"  Voice {i}: {voice['name']}")
+            print(f"    {voice['desc']}")
+            print(f"    To select: --voice {voice['name']}")
+            print()
+
+        return [{"number": i + 1, "name": v["name"], "description": v["desc"]}
+                for i, v in enumerate(builtin_voices)]
+
+    else:
+        print(f"  Audition not available for provider: {provider}")
+        return []
+
+
 def main():
     parser = argparse.ArgumentParser(description="Voice provider setup")
     parser.add_argument("--provider", choices=["elevenlabs", "grok", "builtin", "none"])
@@ -91,9 +172,15 @@ def main():
     parser.add_argument("--config", default=str(Path.home() / ".openclaw" / "openclaw.json"))
     parser.add_argument("--interactive", action="store_true")
     parser.add_argument("--non-interactive", action="store_true")
+    parser.add_argument("--audition", action="store_true", help="Audition multiple voices")
+    parser.add_argument("--gender", help="Filter voices by gender (male/female)")
+    parser.add_argument("--accent", help="Filter voices by accent (american/british)")
     args = parser.parse_args()
 
-    if args.interactive:
+    if args.audition:
+        provider = args.provider or "elevenlabs"
+        audition_voices(provider, gender=args.gender, accent=args.accent)
+    elif args.interactive:
         interactive_setup(args.config)
     elif args.provider:
         kwargs = {}

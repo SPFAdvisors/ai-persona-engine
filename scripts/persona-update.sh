@@ -1,5 +1,6 @@
 #!/bin/sh
 # persona-update.sh — Update individual persona fields without re-running the full wizard.
+# v2: Safe update pipeline with backup, diff preview, and --force flag.
 
 set -e
 
@@ -8,11 +9,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Defaults
 CONFIG_PATH="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
 WORKSPACE="${OPENCLAW_WORKSPACE:-$HOME/.openclaw/workspace}"
+FORCE=false
 
 # Colors
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 RED='\033[0;31m'
+YELLOW='\033[1;33m'
 BOLD='\033[1m'
 NC='\033[0m'
 
@@ -34,9 +37,47 @@ Options:
   --emoji EMOJI                Update agent emoji
   --config PATH                Config file path (default: ~/.openclaw/openclaw.json)
   --workspace PATH             Workspace directory (default: ~/.openclaw/workspace)
+  --force                      Skip diff review for --regen operations
   -i, --interactive            Interactive mode — walk through each field
   -h, --help                   Show this help
 EOF
+}
+
+# --- Safe Update Pipeline ---
+
+create_backup() {
+    BACKUP_DIR="$WORKSPACE/.persona-backup"
+    mkdir -p "$BACKUP_DIR"
+    for f in SOUL.md USER.md IDENTITY.md MEMORY.md AGENTS.md HEARTBEAT.md; do
+        if [ -f "$WORKSPACE/$f" ]; then
+            cp "$WORKSPACE/$f" "$BACKUP_DIR/$f"
+        fi
+    done
+    printf "${GREEN}  Backup created: $BACKUP_DIR${NC}\n"
+}
+
+show_diff_and_confirm() {
+    file="$1"
+    if [ "$FORCE" = "true" ]; then
+        return 0
+    fi
+    if [ -f "$WORKSPACE/.persona-backup/$file" ] && [ -f "$WORKSPACE/$file" ]; then
+        DIFF_OUT=$(diff -u "$WORKSPACE/.persona-backup/$file" "$WORKSPACE/$file" 2>/dev/null || true)
+        if [ -n "$DIFF_OUT" ]; then
+            printf "\n${YELLOW}  Changes to $file:${NC}\n"
+            echo "$DIFF_OUT" | head -30
+            printf "\n${CYAN}  Apply these changes? (y/n)${NC} > "
+            read -r answer
+            case "$answer" in
+                [yY]*) return 0 ;;
+                *)
+                    cp "$WORKSPACE/.persona-backup/$file" "$WORKSPACE/$file"
+                    printf "${RED}  Reverted $file${NC}\n"
+                    return 1 ;;
+            esac
+        fi
+    fi
+    return 0
 }
 
 update_config_field() {
@@ -61,6 +102,9 @@ write_config(config, '$CONFIG_PATH')
 }
 
 regen_soul() {
+    # Create backup before regeneration
+    create_backup
+
     python3 -c "
 import json, sys
 sys.path.insert(0, '$SCRIPT_DIR')
@@ -77,9 +121,19 @@ profile = {
     'vibe': persona.get('identity', {}).get('vibe', ''),
     'archetype': persona.get('personality', {}).get('archetype', 'custom'),
 }
+
+# Include blend sources if present
+archetypes = persona.get('personality', {}).get('archetypes')
+if archetypes:
+    profile['archetypes'] = archetypes
+
 json.dump(profile, sys.stdout)
 " | python3 "$SCRIPT_DIR/generate-soul.py" --output "$WORKSPACE/SOUL.md"
-    printf "${GREEN}✅ SOUL.md regenerated${NC}\n"
+
+    # Show diff and confirm
+    if show_diff_and_confirm "SOUL.md"; then
+        printf "${GREEN}✅ SOUL.md regenerated${NC}\n"
+    fi
 }
 
 # Parse arguments
@@ -150,6 +204,8 @@ write_config(config, '$CONFIG_PATH')
             shift; CONFIG_PATH="$1" ;;
         --workspace)
             shift; WORKSPACE="$1" ;;
+        --force)
+            FORCE=true ;;
         -i|--interactive)
             INTERACTIVE=true ;;
         -h|--help)

@@ -26,10 +26,13 @@ Usage: persona-import.sh BUNDLE_FILE [OPTIONS]
 Import a .persona bundle into a workspace.
 
 Options:
-  --workspace PATH    Target workspace directory
+  --workspace PATH    Target workspace directory (supports any workspace-* path)
   --config PATH       Config file path
   --force             Overwrite existing files without prompting
   -h, --help          Show this help
+
+Cross-workspace example:
+  persona-import.sh pepper.persona --workspace ~/.openclaw/workspace-new
 EOF
 }
 

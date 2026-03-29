@@ -1,12 +1,16 @@
 """
 Handlebars-style template engine using Python stdlib only.
 Supports {{variable}}, {{#if}}, {{#each}}, and {{#unless}} blocks.
+Also includes personality blending utilities.
 """
 
+import json
 import re
 from pathlib import Path
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "templates"
+PROFILES_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "personality-profiles"
+COMMUNITY_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "community-templates"
 
 
 def _resolve_var(name, context):
@@ -118,3 +122,112 @@ def render_template(name, context):
     """Load and render a template by name."""
     template_str = load_template(name)
     return render(template_str, context)
+
+
+# --- Personality Blending ---
+
+def load_profile(name):
+    """Load a personality profile by name from profiles or community templates."""
+    path = PROFILES_DIR / f"{name}.json"
+    if not path.exists():
+        path = COMMUNITY_DIR / f"{name}.json"
+    if not path.exists():
+        raise FileNotFoundError(f"Profile not found: {name}")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def blend_profiles(archetypes):
+    """
+    Blend multiple archetype profiles with weights.
+
+    Args:
+        archetypes: list of {"name": "companion", "weight": 0.7} dicts
+
+    Returns:
+        A merged profile dict with weighted trait/style merging.
+    """
+    if not archetypes:
+        raise ValueError("At least one archetype required for blending")
+
+    # Normalize weights
+    total = sum(a.get("weight", 1.0) for a in archetypes)
+    weighted = [(a["name"], a.get("weight", 1.0) / total) for a in archetypes]
+
+    # Load all profiles
+    profiles = [(load_profile(name), weight) for name, weight in weighted]
+
+    # Start with first profile as base
+    result = json.loads(json.dumps(profiles[0][0]))
+
+    # Blend traits: collect all unique traits, weighted by presence
+    trait_scores = {}
+    for profile, weight in profiles:
+        for trait in profile.get("traits", []):
+            trait_scores[trait] = trait_scores.get(trait, 0) + weight
+    # Sort by weight descending, keep top traits
+    sorted_traits = sorted(trait_scores.items(), key=lambda x: -x[1])
+    result["traits"] = [t for t, _ in sorted_traits[:6]]
+
+    # Blend communication style (numeric fields use weighted average)
+    comm = {}
+    for key in ("brevity",):
+        val = sum(
+            p.get("communication", {}).get(key, 3) * w
+            for p, w in profiles
+        )
+        comm[key] = round(val)
+
+    # Boolean/enum fields: use highest-weight profile's value
+    primary_profile = max(profiles, key=lambda x: x[1])[0]
+    primary_comm = primary_profile.get("communication", {})
+    comm["humor"] = primary_comm.get("humor", False)
+    comm["swearing"] = primary_comm.get("swearing", "never")
+    comm["banOpeningPhrases"] = primary_comm.get("banOpeningPhrases", True)
+    result["communication"] = comm
+
+    # Blend boundaries: use primary for booleans, weighted for emotional depth
+    depth_map = {"none": 0, "low": 1, "medium": 2, "high": 3}
+    depth_reverse = {0: "none", 1: "low", 2: "medium", 3: "high"}
+    depth_val = sum(
+        depth_map.get(p.get("boundaries", {}).get("emotionalDepth", "none"), 0) * w
+        for p, w in profiles
+    )
+    primary_bounds = primary_profile.get("boundaries", {})
+    result["boundaries"] = {
+        "petNames": primary_bounds.get("petNames", False),
+        "flirtation": primary_bounds.get("flirtation", False),
+        "emotionalDepth": depth_reverse.get(round(depth_val), "low"),
+        "protective": primary_bounds.get("protective", True),
+    }
+
+    # Blend vibe summaries
+    vibes = []
+    for profile, weight in profiles:
+        vibe = profile.get("vibeSummary", "")
+        if vibe:
+            vibes.append(vibe)
+    if len(vibes) > 1:
+        result["vibeSummary"] = " ".join(vibes)
+    elif vibes:
+        result["vibeSummary"] = vibes[0]
+
+    # Blend brevity/swearing descriptions from primary
+    result["brevityDesc"] = primary_profile.get("brevityDesc", "")
+    result["swearingDesc"] = primary_profile.get("swearingDesc", "")
+
+    # Combine platform notes
+    all_notes = []
+    seen = set()
+    for profile, _ in profiles:
+        for note in profile.get("platformNotes", []):
+            if note not in seen:
+                all_notes.append(note)
+                seen.add(note)
+    result["platformNotes"] = all_notes
+
+    # Set archetype to "blend"
+    result["archetype"] = "blend"
+    result["blendSources"] = [{"name": n, "weight": w} for n, w in weighted]
+
+    return result

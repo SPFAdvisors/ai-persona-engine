@@ -14,7 +14,7 @@ from pathlib import Path
 
 # Add parent to path for lib imports
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib.templates import render_template
+from lib.templates import render_template, load_profile, blend_profiles
 
 
 PROFILES_DIR = Path(__file__).resolve().parent.parent / "assets" / "personality-profiles"
@@ -23,6 +23,10 @@ PROFILES_DIR = Path(__file__).resolve().parent.parent / "assets" / "personality-
 def load_archetype(archetype_name):
     """Load a personality archetype JSON file."""
     path = PROFILES_DIR / f"{archetype_name}.json"
+    if not path.exists():
+        # Try community templates
+        community_dir = PROFILES_DIR.parent / "community-templates"
+        path = community_dir / f"{archetype_name}.json"
     if not path.exists():
         print(f"Error: Unknown archetype '{archetype_name}'", file=sys.stderr)
         print(f"Available: {', '.join(p.stem for p in PROFILES_DIR.glob('*.json'))}", file=sys.stderr)
@@ -122,6 +126,25 @@ def main():
     if args.input:
         with open(args.input, "r", encoding="utf-8") as f:
             profile = json.load(f)
+
+        # Support blend syntax: {"archetypes": [{"name": "companion", "weight": 0.7}, ...]}
+        if "archetypes" in profile and isinstance(profile["archetypes"], list):
+            blended = blend_profiles(profile["archetypes"])
+            # Preserve non-archetype fields from input
+            for key in ("name", "emoji", "creature", "vibe", "userName", "userRelationship"):
+                if key in profile:
+                    blended[key] = profile[key]
+            profile = blended
+        elif "archetype" in profile and profile["archetype"] not in ("custom", "blend", ""):
+            # Load archetype as base, override with profile values
+            try:
+                base = load_archetype(profile["archetype"])
+                for key, val in profile.items():
+                    if key != "archetype" and val:
+                        base[key] = val
+                profile = base
+            except SystemExit:
+                pass  # Use profile as-is if archetype not found
     elif args.archetype:
         profile = load_archetype(args.archetype)
     else:

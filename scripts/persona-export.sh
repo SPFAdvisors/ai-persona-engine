@@ -31,7 +31,8 @@ Options:
   --include-memory         Include MEMORY.md and memory/ directory
   --include-voice-config   Include voice settings (NOT API keys)
   --config PATH            Config file path
-  --workspace PATH         Workspace directory
+  --workspace PATH         Workspace directory (supports workspace-* pattern)
+  --output-dir DIR         Directory for the output bundle (default: current dir)
   -h, --help               Show this help
 EOF
 }
